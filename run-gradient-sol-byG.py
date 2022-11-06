@@ -4,8 +4,8 @@ import numpy as np
 
 vec = np.ones((2,1))
 mu = 0.01
-Ak = np.zeros((2,1))
-lambdak = 1
+Ak = np.zeros((2,1))            # current (x,y)
+lambdak = 1                     # 2*lambda in fact
 Akp1 = np.array(([1e4],[1e4]))
 
 while (np.linalg.norm(vec + lambdak*Ak)) > 1e-8:
@@ -15,3 +15,4 @@ while (np.linalg.norm(vec + lambdak*Ak)) > 1e-8:
     lambdak = lambdakp1
 
 print(Ak)
+print()
