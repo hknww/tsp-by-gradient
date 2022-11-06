@@ -15,4 +15,3 @@ while (np.linalg.norm(vec + lambdak*Ak)) > 1e-8:
     lambdak = lambdakp1
 
 print(Ak)
-print(np.linalg.norm(vec + lambdak*Ak)**2)
