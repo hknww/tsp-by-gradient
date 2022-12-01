@@ -11,9 +11,9 @@ import csv
 from functools import partial
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button
 import networkx as nx
-from pulp import LpVariable, LpBinary, LpMinimize, LpProblem, lpSum, GUROBI_CMD
+from pulp import LpVariable, LpBinary, LpMinimize, LpProblem, lpSum, GUROBI_CMD, PULP_CBC_CMD
 # import gurobi
 
 
@@ -285,35 +285,37 @@ class TSPProblem:
         if self.lp_solution is None:
             C = self.get_cost_array()
             I = list(range(len(C)))
-            
-            x = {} 
+
+            x = {}
             for i in I:
                 for j in I:
                     x[i, j] = LpVariable(f"x({i, j})", cat=LpBinary)
-            
-            u = {} 
+
+            u = {}
             for i in I:
                 u[i] = LpVariable(f"u({i})")
-            
+
             prob = LpProblem("ordo", LpMinimize)
             prob += lpSum(C[i, j] * x[i, j] for i in I for j in I)
-            
+
             #C1
             for i in I:
                 prob += lpSum([ x[(i,j)] for j in I])==1, f"C1_{i}"
-                
+
             #C2
             for j in I:
                 prob += lpSum([ x[(i,j)] for i in I])==1, f"C2_{j}"
-                        
+
             #C3
             for i in I[1:]:
                 for j in I[1:]:
-                    print(i, j)
                     prob += u[i] - u[j] + I[-1] * x[i, j] <= I[-1] - 1, f"C3_{i, j}"
-                    
+
             # print(prob)
-            prob.solve(GUROBI_CMD(msg=1))
+            try:
+                prob.solve(GUROBI_CMD(msg=0))
+            except:
+                prob.solve(PULP_CBC_CMD(msg=0))
             self.lp_solution = np.array([[x[i, j].varValue for i in I] for j in I])
         return self.lp_solution
 
@@ -327,7 +329,7 @@ class OrientedSolver:
     Solver from (12) of "Continuous relaxations for the traveling salesman problem"
     """
 
-    def __init__(self, problem, pas = 0.0001):
+    def __init__(self, problem, pas = 0.00001):
         """
         Parameters
         ----------
@@ -340,12 +342,14 @@ class OrientedSolver:
         self.__pas = pas
         self.__number = problem.get_number()
         self.__solution_history = []
+        self.grad_history = []
         self.__solution_turn_history = []
         self.__lambda_history = []
+        self.grad_lbd_history = []
         self.__A = None
         self.__generate_default_solution()
         self.__generate_default_lambda()
-        
+
         self.__N = None
         self.__alpha = None
 
@@ -464,6 +468,8 @@ class OrientedSolver:
 
         p_dot = -1 * P @ (gnr_lie_bracket(P.T @ B @ P, A) + gnr_lie_bracket(P.T @ B.T @ P, A.T))
         p_dot = p_dot - lbd * P @ (indiv_product(P, P).T @ P - P.T @ indiv_product(P, P))
+        # print(p_dot)
+        self.grad_history += [np.linalg.norm(p_dot, 'fro')]
         new_p = solution_var - self.__pas * p_dot
 
         # print(new_p)
@@ -490,89 +496,89 @@ class OrientedSolver:
 
         lbd_dot = 1/3 * trace(P.T @ (P - (indiv_product(P, P))))
         new_lbd = lambda_var - self.__pas * lbd_dot
+        self.grad_lbd_history += [lbd_dot]
 
         # print(new_lbd)
         # return lambda_var + 0.01
         return new_lbd
 
     def get_N(self):
-        """
-        
+        # """
 
-        Returns
-        -------
-        None.
 
-        """
+        # Returns
+        # -------
+        # None.
+
+        # """
         if self.__N is None:
             C = self.__problem.get_cost_array()
             self.__N = C
         return self.__N
-        
-    def get_alpha(self):
-        """
-        
-        
-        Returns
-        -------
-        None.
 
-        """
+    def get_alpha(self):
+        # """
+
+
+        # Returns
+        # -------
+        # None.
+
+        # """
         if self.__alpha is None:
             A = self.__A
             N = self.get_N()
             alpha = 1 / (4 * trace(A @ A.T)**1/2 * trace(N @ N.T)**1/2)
             self.__alpha = alpha
         return self.__alpha
-        
 
-    def new_solution_exp(self, solution_var, lambda_var):
-        """
-        Calculate the futur solution
-            ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
+    def new_solution_exp_old(self, solution_var, lambda_var):
+        # """
+        # Calculate the futur solution
+        #     ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
 
-        Parameters
-        ----------
-        solution_var : array
-        lambda_var : float
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
 
-        Returns
-        -------
-        an array
-            The new solution.
+        # Returns
+        # -------
+        # an array
+        #     The new solution.
 
-        """
+        # """
         lbd = lambda_var
-        
+
         P = solution_var
         H_zero = self.__A
         N = self.get_N()
         alpha = self.get_alpha()
 
         lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
-        
+
         new_p = P @ exp_of_pade( alpha * lie_bracket)
 
         # print(new_p)
         # return self.__solution_history[0] * lambda_var / 4
         return new_p
 
-    def new_lambda_exp(self, solution_var, lambda_var):
-        """
-        Calculate the futur lambda
-            ̇ λ= 1/3 * tr( P^T * (P − (P ◦ P)) )
+    def new_lambda_exp_old(self, solution_var, lambda_var):
+        # """
+        # Calculate the futur lambda
+        #     ̇ λ= 1/3 * tr( P^T * (P − (P ◦ P)) )
 
-        Parameters
-        ----------
-        solution_var : array
-        lambda_var : float
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
 
-        Returns
-        -------
-        an array
-            The new lambda.
+        # Returns
+        # -------
+        # an array
+        #     The new lambda.
 
-        """
+        # """
         P = solution_var
 
         lbd_dot = 1/3 * trace(P.T @ (P - (indiv_product(P, P))))
@@ -581,6 +587,37 @@ class OrientedSolver:
         # print(new_lbd)
         # return lambda_var + 0.01
         return new_lbd
+
+    def new_solution_exp(self, solution_var):
+        # """
+        # Calculate the futur solution
+        #     ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
+
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
+
+        # Returns
+        # -------
+        # an array
+        #     The new solution.
+
+        # """
+        P = solution_var
+        H_zero = self.__A
+        N = self.get_N()
+        alpha = self.get_alpha()
+
+        lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
+
+        self.grad_history += [np.linalg.norm(lie_bracket, 'fro')]
+
+        new_p = P @ exp_of_pade( alpha * lie_bracket)
+
+        # print(new_p)
+        # return self.__solution_history[0] * lambda_var / 4
+        return new_p
 
     def breaker(self, solution_var, lambda_var):
         """
@@ -608,13 +645,15 @@ class OrientedSolver:
         while self.breaker(self.get_current_solution(), self.get_current_lambda()) > limit and count < n_max:
             count += 1
             ### Lagrange
-            self.__save_new_solution(self.new_solution(self.get_current_solution(), self.get_current_lambda()))
-            self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
-            self.__save_new_lambda(self.new_lambda(self.get_current_solution(), self.get_current_lambda()))
-            ### Exponential
-            # self.__save_new_solution(self.new_solution_exp(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_solution(self.new_solution(self.get_current_solution(), self.get_current_lambda()))
             # self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
-            # self.__save_new_lambda(self.new_lambda_exp(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_lambda(self.new_lambda(self.get_current_solution(), self.get_current_lambda()))
+            ### Exponential 1
+            # self.__save_new_solution(self.new_solution_exp_old(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
+            # self.__save_new_lambda(self.new_lambda_exp_old(self.get_current_solution(), self.get_current_lambda()))
+            ### Exponential de tour
+            self.__save_new_turn_solution(self.new_solution_exp(self.get_current_turn_solution()))
             # print(self.cost(-1))
 
     def solve(self):
@@ -622,23 +661,45 @@ class OrientedSolver:
         Resolve the TSP Problem
 
         """
-        self.lagrange(n_max = 10000)
-        self.__save_new_turn_solution(self.__problem.lp_solve())
-        print(self.__solution_history[-1])
-        plt.plot(self.__lambda_history)
-        plt.show()
-        plt.plot([self.cost(i) for i in range(len(self.get_turn_solutions_history()))])
-        plt.show()
+        self.lagrange(n_max = 5e5)
 
     def plot(self):
         """
         Plot the solution evolution
 
         """
+        self.__save_new_turn_solution(self.__problem.lp_solve())
+
+        fig = plt.figure()
+        # For slider and buttons
+        area_01 = fig.add_axes([0.02, 0.20, 0.09, 0.72])
+        area_02 = fig.add_axes([0.07, 0.04, 0.04, 0.08])
+        area_03 = fig.add_axes([0.02, 0.04, 0.04, 0.08])
+        # For networks
+        area_11 = fig.add_axes([0.14, 0.04, 0.25, 0.42])
+        area_12 = fig.add_axes([0.14, 0.54, 0.25, 0.42])
+        # For plotting values variations
+        area_21 = fig.add_axes([0.44, 0.04, 0.25, 0.42])
+        area_21.set_title('Lambda history')
+        area_22 = fig.add_axes([0.44, 0.54, 0.25, 0.42])
+        area_22.set_title('P_dot history')
+        area_31 = fig.add_axes([0.74, 0.04, 0.25, 0.42])
+        area_31.set_title('Cost history')
+        area_32 = fig.add_axes([0.74, 0.54, 0.25, 0.42])
+        area_32.set_title('Lambda_dot history')
+
+
+        area_21.plot(self.__lambda_history)
+        area_31.plot([self.cost(i) for i in range(len(self.get_turn_solutions_history()) - 1)])
+        area_31.plot([0, len(self.get_turn_solutions_history()) - 2], [self.cost(-1), self.cost(-1)])
+        area_22.plot(self.grad_history)
+        area_32.plot(self.grad_lbd_history)
+
 
         intervale_min = 0
         intervale_max = len(self.__solution_turn_history) - 1
         intervale_init = intervale_max
+
 
         list_pos = {}
         for i in range(self.__problem.get_number()):
@@ -649,10 +710,11 @@ class OrientedSolver:
             array = self.__solution_turn_history[index_solution]
             for i in range(self.__problem.get_number()):
                 for j in range(self.__problem.get_number()):
-                    if array[i, j] > 0.05:
+                    if array[i, j] > 0.01:
                         edge += [(i, j, {"weight":int(array[i, j] * 100) / 50})]
             # print(edge)
             return edge
+
 
         def graph_network(graph, v_list_pos, v_index, v_ax):
             graph.clear_edges()
@@ -661,30 +723,43 @@ class OrientedSolver:
             widthlist = list(nx.get_edge_attributes(graph,'weight').values())
             nx.draw_networkx_edges(graph, v_list_pos, width=widthlist, ax=v_ax)
             nx.draw_networkx_labels(graph, v_list_pos, font_size=10, font_family="sans-serif", ax=v_ax)
-            # edge_labels = nx.get_edge_attributes(graph, "weight")
-            # nx.draw_networkx_edge_labels(graph, v_list_pos, edge_labels, ax=v_ax)
+            v_ax.set_title('Flow')
 
-        fig, axe = plt.subplots()
         network_graph = nx.DiGraph()
-        graph_network(network_graph, list_pos, intervale_init, axe)
-        fig.subplots_adjust(left=0.25)
-        axamp = fig.add_axes([0.1, 0.1, 0.0225, 0.8])
-        amp_slider = Slider(ax=axamp,
-                            label="Itération",valmin=intervale_min,
-                            valmax=intervale_max,
-                            valinit=intervale_init,
-                            orientation="vertical",
-                            valstep=1)
+        network_graph_2 = nx.DiGraph()
+        graph_network(network_graph, list_pos, intervale_init, area_11)
+        graph_network(network_graph_2, list_pos, intervale_init, area_12)
+        area_12.set_title('Solution')
+
+
+        slider = Slider(ax=area_01,
+                        label="Itération",valmin=intervale_min,
+                        valmax=intervale_max,
+                        valinit=intervale_init,
+                        orientation="vertical",
+                        valstep=1)
+        b_add = Button(area_02, '+')
+        b_sub = Button(area_03, '-')
 
         def update(v_fig, v_ax, v_graph, v_list_pos, val):
             v_ax.cla()
-            # print(val)
-            # print(self.get_solutions_history()[val])
             graph_network(v_graph, v_list_pos, val, v_ax)
             v_fig.canvas.draw_idle()
 
-        amp_slider.on_changed(partial(update, fig, axe, network_graph, list_pos))
+        def act_add(v_fig, v_ax, v_graph, v_list_pos, v_slider, val):
+            v_slider.set_val(min(v_slider.val + 1, v_slider.valmax))
+            update(v_fig, v_ax, v_graph, v_list_pos, v_slider.val)
 
+        def act_sub(v_fig, v_ax, v_graph, v_list_pos, v_slider, val):
+            v_slider.set_val(max(v_slider.val - 1, v_slider.valmin))
+            update(v_fig, v_ax, v_graph, v_list_pos, v_slider.val)
+
+        slider.on_changed(partial(update, fig, area_11, network_graph, list_pos))
+        b_add.on_clicked(partial(act_add, fig, area_11, network_graph, list_pos, slider))
+        b_sub.on_clicked(partial(act_sub, fig, area_11, network_graph, list_pos, slider))
+
+        # manager = plt.get_current_fig_manager()
+        # manager.full_screen_toggle()
         plt.show()
 
     def cost(self, v_index):
@@ -714,8 +789,8 @@ if __name__ == "__main__":
     P_1 = TSPProblem(4, 100)
 
     # P_1.save("test.csv")
-    # P_1.load("test.csv")
-    # P_1.lp_solve()
+    P_1.load("test.csv")
+    P_1.lp_solve()
     # print(P_1)
 
     # P_2 = Problem(50, 200)

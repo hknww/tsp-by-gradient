@@ -9,11 +9,12 @@ Created on Mon Nov  7 15:13:50 2022
 
 import csv
 from functools import partial
+from itertools import permutations
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button
 import networkx as nx
-from pulp import LpVariable, LpBinary, LpMinimize, LpProblem, lpSum, GUROBI_CMD
+from pulp import LpVariable, LpBinary, LpMinimize, LpProblem, lpSum, GUROBI_CMD, PULP_CBC_CMD
 # import gurobi
 
 
@@ -39,9 +40,8 @@ def std_lie_bracket(a_array, b_array):
     assert isinstance(a_array, np.ndarray), "Check the type of A"
     assert isinstance(b_array, np.ndarray), "Check the type of B"
     assert a_array.shape == b_array.shape, "Check the size link between A and B"
-    result = np.dot(a_array, b_array) - np.dot(b_array, a_array)
+    result = a_array @ b_array - b_array @ a_array
     return result
-
 
 def gnr_lie_bracket(a_array, b_array):
     """
@@ -61,9 +61,8 @@ def gnr_lie_bracket(a_array, b_array):
     assert isinstance(b_array, np.ndarray), "Check the type of B"
     assert a_array.shape[0] == b_array.shape[0], "Check the size link between A and B"
     assert a_array.shape[1] == b_array.shape[1], "Check the size link between A and B"
-    result = np.dot(a_array.transpose(), b_array) - np.dot(b_array.transpose(), a_array)
+    result = a_array.T @ b_array - b_array.T @ a_array
     return result
-
 
 def indiv_product(a_array, b_array):
     """
@@ -86,7 +85,6 @@ def indiv_product(a_array, b_array):
     result = np.multiply(a_array, b_array)
     return result
 
-
 def trace(a_array):
     """
     Calculate a trace of matrix : a_i,j * b_i,j for all i,j
@@ -103,7 +101,6 @@ def trace(a_array):
     assert isinstance(a_array, np.ndarray), "Check the type of A"
     result = np.trace(a_array)
     return result
-
 
 def exp_of_pade(a_array):
     """
@@ -122,10 +119,114 @@ def exp_of_pade(a_array):
     assert isinstance(a_array, np.ndarray), "Check the type of A"
     assert a_array.shape[0] == a_array.shape[1  ], "Check the square size"
     identity = np.identity(a_array.shape[0])
-    up = 2 * identity - a_array
-    down = 2 * identity + a_array
-    result = up @ np.linalg.inv(down)
+    up_part = 2 * identity - a_array
+    down_part = 2 * identity + a_array
+    result = up_part @ np.linalg.inv(down_part)
     return result
+
+def matrix_dir(size):
+    """
+    Return a direct size x size permutation matrix
+
+    Parameters
+    ----------
+    size : integer
+        the size of the matrix
+
+    Returns
+    -------
+    the direct permutation matrix
+
+    """
+    assert isinstance(size, int), "Check the type of A"
+    assert size > 0, "Check the type of A"
+    array = np.zeros((size, size))
+    array[size - 1, 0] = 1
+    for var in range(0, size - 1):
+        array[0 + var, 1 + var] = 1
+    return array
+
+def matrix_undir(size):
+    """
+    Return a undirect size x size permutation matrix
+
+    Parameters
+    ----------
+    size : integer
+        the size of the matrix
+
+    Returns
+    -------
+    the undirect permutation matrix
+
+    """
+    assert isinstance(size, int), "Check the type of A"
+    assert size > 0, "Check the type of A"
+    array = np.zeros((size, size))
+    array[size - 1, 0] = 1
+    array[0, size - 1] = 1
+    for var in range(0, size - 1):
+        array[0 + var, 1 + var] = 1
+        array[1 + var, 0 + var] = 1
+    return array
+
+def distance_to_permut_dir(array):
+    """
+    Return the distance of a matrix to the permutation matrix area
+
+    Parameters
+    ----------
+    array : array
+        DESCRIPTION.
+
+    Returns
+    -------
+    The distance
+
+    """
+    assert isinstance(array, np.ndarray), "Check the type of A"
+    assert array.shape[0] == array.shape[1], "Check the size of A"
+    f_array = array @ array.T
+    f_array = f_array - np.identity(array.shape[0])
+    return np.linalg.norm(f_array)
+
+def distance_to_permut_undir(array):
+    """
+    Return the distance of a matrix to the permutation matrix area
+
+    Parameters
+    ----------
+    array : array
+        DESCRIPTION.
+
+    Returns
+    -------
+    The distance
+
+    """
+    assert isinstance(array, np.ndarray), "Check the type of A"
+    assert array.shape[0] == array.shape[1], "Check the size of A"
+    f_array = array @ array.T
+    f_array = f_array - np.identity(array.shape[0])
+    return np.linalg.norm(f_array)
+
+def norm_fro(array):
+    """
+    Return the norm of frovenus
+
+    Parameters
+    ----------
+    array : array
+        DESCRIPTION.
+
+    Returns
+    -------
+    The norm
+
+    """
+    assert isinstance(array, np.ndarray), "Check the type of A"
+    assert array.shape[0] == array.shape[1], "Check the size of A"
+    return np.linalg.norm(array, "fro")
 
 
 
@@ -285,35 +386,37 @@ class TSPProblem:
         if self.lp_solution is None:
             C = self.get_cost_array()
             I = list(range(len(C)))
-            
-            x = {} 
+
+            x = {}
             for i in I:
                 for j in I:
                     x[i, j] = LpVariable(f"x({i, j})", cat=LpBinary)
-            
-            u = {} 
+
+            u = {}
             for i in I:
                 u[i] = LpVariable(f"u({i})")
-            
+
             prob = LpProblem("ordo", LpMinimize)
             prob += lpSum(C[i, j] * x[i, j] for i in I for j in I)
-            
+
             #C1
             for i in I:
                 prob += lpSum([ x[(i,j)] for j in I])==1, f"C1_{i}"
-                
+
             #C2
             for j in I:
                 prob += lpSum([ x[(i,j)] for i in I])==1, f"C2_{j}"
-                        
+
             #C3
             for i in I[1:]:
                 for j in I[1:]:
-                    print(i, j)
                     prob += u[i] - u[j] + I[-1] * x[i, j] <= I[-1] - 1, f"C3_{i, j}"
-                    
+
             # print(prob)
-            prob.solve(GUROBI_CMD(msg=1))
+            try:
+                prob.solve(GUROBI_CMD(msg=0))
+            except:
+                prob.solve(PULP_CBC_CMD(msg=0))
             self.lp_solution = np.array([[x[i, j].varValue for i in I] for j in I])
         return self.lp_solution
 
@@ -327,7 +430,7 @@ class OrientedSolver:
     Solver from (12) of "Continuous relaxations for the traveling salesman problem"
     """
 
-    def __init__(self, problem, pas = 0.0001):
+    def __init__(self, problem, pas = 0.00001):
         """
         Parameters
         ----------
@@ -339,14 +442,22 @@ class OrientedSolver:
         self.__problem = problem
         self.__pas = pas
         self.__number = problem.get_number()
+
         self.__solution_history = []
         self.__solution_turn_history = []
         self.__lambda_history = []
-        self.__A = None
-        self.__generate_default_solution()
-        self.__generate_default_lambda()
-        
+
+        self.grad_lbd_history = []
+        self.grad_history = []
+
+        self.__A = matrix_undir(problem.get_number())
+        self.__save_new_turn_solution(matrix_undir(problem.get_number()))
+        # self.__A = None
+        # self.__generate_default_solution()
+        # self.__generate_default_lambda()
+
         self.__N = None
+        self.base_change = None
         self.__alpha = None
 
     def __str__(self):
@@ -464,6 +575,8 @@ class OrientedSolver:
 
         p_dot = -1 * P @ (gnr_lie_bracket(P.T @ B @ P, A) + gnr_lie_bracket(P.T @ B.T @ P, A.T))
         p_dot = p_dot - lbd * P @ (indiv_product(P, P).T @ P - P.T @ indiv_product(P, P))
+        # print(p_dot)
+        self.grad_history += [np.linalg.norm(p_dot, 'fro')]
         new_p = solution_var - self.__pas * p_dot
 
         # print(new_p)
@@ -490,6 +603,7 @@ class OrientedSolver:
 
         lbd_dot = 1/3 * trace(P.T @ (P - (indiv_product(P, P))))
         new_lbd = lambda_var - self.__pas * lbd_dot
+        self.grad_lbd_history += [lbd_dot]
 
         # print(new_lbd)
         # return lambda_var + 0.01
@@ -497,25 +611,39 @@ class OrientedSolver:
 
     def get_N(self):
         """
-        
+
 
         Returns
         -------
-        None.
+        the N array
 
         """
-        if self.__N is None:
+        if self.__N is None or self.base_change is None:
             C = self.__problem.get_cost_array()
-            self.__N = C
+            
+            eigenValues, eigenVectors = np.linalg.eig(C)
+            print(eigenValues)
+            print(eigenVectors)
+
+            idx = eigenValues.argsort()[::1]
+            eigenValues = eigenValues[idx]
+            eigenVectors = eigenVectors[:,idx]
+            print(eigenValues)
+            print(eigenVectors)
+            
+            self.__N = np.diag(eigenValues)
+            self.base_change = eigenVectors
+            print(self.__N)
+            print(self.base_change)
         return self.__N
-        
+
     def get_alpha(self):
         """
-        
-        
+
+
         Returns
         -------
-        None.
+        alpha
 
         """
         if self.__alpha is None:
@@ -524,55 +652,80 @@ class OrientedSolver:
             alpha = 1 / (4 * trace(A @ A.T)**1/2 * trace(N @ N.T)**1/2)
             self.__alpha = alpha
         return self.__alpha
-        
 
-    def new_solution_exp(self, solution_var, lambda_var):
+    def new_solution_exp_old(self, solution_var, lambda_var):
         """
-        Calculate the futur solution
-            ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
+
 
         Parameters
         ----------
         solution_var : array
-        lambda_var : float
+            the old array
 
         Returns
         -------
-        an array
-            The new solution.
+        new_p : array
+            the new array
 
         """
-        lbd = lambda_var
-        
+        # """
+        # Calculate the futur solution
+        #     ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
+
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
+
+        # Returns
+        # -------
+        # an array
+        #     The new solution.
+
+        # """
         P = solution_var
         H_zero = self.__A
         N = self.get_N()
         alpha = self.get_alpha()
 
         lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
-        
+
         new_p = P @ exp_of_pade( alpha * lie_bracket)
 
         # print(new_p)
         # return self.__solution_history[0] * lambda_var / 4
         return new_p
 
-    def new_lambda_exp(self, solution_var, lambda_var):
+    def new_lambda_exp_old(self, solution_var, lambda_var):
         """
-        Calculate the futur lambda
-            ̇ λ= 1/3 * tr( P^T * (P − (P ◦ P)) )
+
 
         Parameters
         ----------
         solution_var : array
-        lambda_var : float
+            the old array
 
         Returns
         -------
-        an array
-            The new lambda.
+        new_p : array
+            the new array
 
         """
+        # """
+        # Calculate the futur lambda
+        #     ̇ λ= 1/3 * tr( P^T * (P − (P ◦ P)) )
+
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
+
+        # Returns
+        # -------
+        # an array
+        #     The new lambda.
+
+        # """
         P = solution_var
 
         lbd_dot = 1/3 * trace(P.T @ (P - (indiv_product(P, P))))
@@ -582,7 +735,52 @@ class OrientedSolver:
         # return lambda_var + 0.01
         return new_lbd
 
-    def breaker(self, solution_var, lambda_var):
+    def new_solution_exp(self, solution_var):
+        """
+
+
+        Parameters
+        ----------
+        solution_var : array
+            the old array
+
+        Returns
+        -------
+        new_p : array
+            the new array
+
+        """
+        # """
+        # Calculate the futur solution
+        #     ̇ P = −P * ({ P^T * B * P, A} + { P^T B^T P, A^T }) − λ * P * ( (P ◦ P)^T * P − P^T * (P ◦ P) )
+
+        # Parameters
+        # ----------
+        # solution_var : array
+        # lambda_var : float
+
+        # Returns
+        # -------
+        # an array
+        #     The new solution.
+
+        # """
+        P = solution_var
+        H_zero = self.__A
+        N = self.get_N()
+        alpha = self.get_alpha()
+
+        lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
+
+        self.grad_history += [np.linalg.norm(lie_bracket, 'fro')]
+
+        new_p = exp_of_pade(alpha * lie_bracket) @ P @ exp_of_pade(-1 * alpha * lie_bracket)
+
+        # print(new_p)
+        # return self.__solution_history[0] * lambda_var / 4
+        return new_p
+
+    def breaker(self):
         """
         Calculate the breaker value
 
@@ -604,17 +802,21 @@ class OrientedSolver:
 
         """
 
+        print(self.get_N())
+
         count = 0
-        while self.breaker(self.get_current_solution(), self.get_current_lambda()) > limit and count < n_max:
+        while self.breaker() > limit and count < n_max:
             count += 1
             ### Lagrange
-            self.__save_new_solution(self.new_solution(self.get_current_solution(), self.get_current_lambda()))
-            self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
-            self.__save_new_lambda(self.new_lambda(self.get_current_solution(), self.get_current_lambda()))
-            ### Exponential
-            # self.__save_new_solution(self.new_solution_exp(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_solution(self.new_solution(self.get_current_solution(), self.get_current_lambda()))
             # self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
-            # self.__save_new_lambda(self.new_lambda_exp(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_lambda(self.new_lambda(self.get_current_solution(), self.get_current_lambda()))
+            ### Exponential 1
+            # self.__save_new_solution(self.new_solution_exp_old(self.get_current_solution(), self.get_current_lambda()))
+            # self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
+            # self.__save_new_lambda(self.new_lambda_exp_old(self.get_current_solution(), self.get_current_lambda()))
+            ### Exponential de tour
+            self.__save_new_turn_solution(self.new_solution_exp(self.get_current_turn_solution()))
             # print(self.cost(-1))
 
     def solve(self):
@@ -622,13 +824,8 @@ class OrientedSolver:
         Resolve the TSP Problem
 
         """
-        self.lagrange(n_max = 10000)
+        self.lagrange(n_max = 1e5)
         self.__save_new_turn_solution(self.__problem.lp_solve())
-        print(self.__solution_history[-1])
-        plt.plot(self.__lambda_history)
-        plt.show()
-        plt.plot([self.cost(i) for i in range(len(self.get_turn_solutions_history()))])
-        plt.show()
 
     def plot(self):
         """
@@ -636,9 +833,45 @@ class OrientedSolver:
 
         """
 
+        fig = plt.figure()
+        # For slider and buttons
+        area_01 = fig.add_axes([0.02, 0.20, 0.09, 0.72])
+        area_02 = fig.add_axes([0.07, 0.04, 0.04, 0.08])
+        area_03 = fig.add_axes([0.02, 0.04, 0.04, 0.08])
+        # For networks
+        area_11 = fig.add_axes([0.14, 0.04, 0.25, 0.42])
+        area_12 = fig.add_axes([0.14, 0.54, 0.25, 0.42])
+        # For plotting values variations
+        area_21 = fig.add_axes([0.44, 0.04, 0.25, 0.42])
+        area_21.set_title('Lambda history')
+        area_22 = fig.add_axes([0.44, 0.54, 0.25, 0.42])
+        area_22.set_title('P_dot history')
+        area_31 = fig.add_axes([0.74, 0.04, 0.25, 0.42])
+        area_31.set_title('Cost history')
+        area_32 = fig.add_axes([0.74, 0.54, 0.25, 0.42])
+        area_32.set_title('Lambda_dot history')
+
+        list_distance = []
+        list_norm = []
+        list_cost = []
+        for i in range(len(self.get_turn_solutions_history()) - 1):
+            list_distance += [distance_to_permut_undir(self.__solution_turn_history[i])]
+            list_norm += [norm_fro(self.__solution_turn_history[i])]
+            list_cost += [self.cost(i)]
+
+        area_21.plot(self.__lambda_history)
+        area_21.plot(list_distance)
+        area_31.plot(list_cost)
+        area_31.plot([0, len(self.get_turn_solutions_history()) - 2], [2*self.cost(-1), 2*self.cost(-1)])
+        area_22.plot(self.grad_history)
+        area_32.plot(self.grad_lbd_history)
+        area_32.plot(list_norm)
+
+
         intervale_min = 0
-        intervale_max = len(self.__solution_turn_history) - 1
+        intervale_max = len(self.__solution_turn_history) - 2
         intervale_init = intervale_max
+
 
         list_pos = {}
         for i in range(self.__problem.get_number()):
@@ -649,42 +882,60 @@ class OrientedSolver:
             array = self.__solution_turn_history[index_solution]
             for i in range(self.__problem.get_number()):
                 for j in range(self.__problem.get_number()):
-                    if array[i, j] > 0.05:
-                        edge += [(i, j, {"weight":int(array[i, j] * 100) / 50})]
+                    if array[i, j] > 0.01:
+                        edge += [(i, j, {"weight":int(array[i, j] * 100) / 50, "color":'black'})]
+                    if array[i, j] < -0.01:
+                        edge += [(i, j, {"weight":int(array[i, j] * 100) / 50, "color":'r'})]
             # print(edge)
             return edge
+
 
         def graph_network(graph, v_list_pos, v_index, v_ax):
             graph.clear_edges()
             graph.update(edges=get_edge(v_index))
             nx.draw_networkx_nodes(graph, v_list_pos, node_size=150, ax=v_ax)
             widthlist = list(nx.get_edge_attributes(graph,'weight').values())
-            nx.draw_networkx_edges(graph, v_list_pos, width=widthlist, ax=v_ax)
+            nx.draw_networkx_edges(graph, v_list_pos, width=widthlist, ax=v_ax)            
+            colors = nx.get_edge_attributes(graph,'color').values()
+            nx.draw_networkx_edges(graph, v_list_pos, edge_color=colors, ax=v_ax)
             nx.draw_networkx_labels(graph, v_list_pos, font_size=10, font_family="sans-serif", ax=v_ax)
-            # edge_labels = nx.get_edge_attributes(graph, "weight")
-            # nx.draw_networkx_edge_labels(graph, v_list_pos, edge_labels, ax=v_ax)
+            v_ax.set_title('Flow')
 
-        fig, axe = plt.subplots()
         network_graph = nx.DiGraph()
-        graph_network(network_graph, list_pos, intervale_init, axe)
-        fig.subplots_adjust(left=0.25)
-        axamp = fig.add_axes([0.1, 0.1, 0.0225, 0.8])
-        amp_slider = Slider(ax=axamp,
-                            label="Itération",valmin=intervale_min,
-                            valmax=intervale_max,
-                            valinit=intervale_init,
-                            orientation="vertical",
-                            valstep=1)
+        network_graph_2 = nx.DiGraph()
+        graph_network(network_graph, list_pos, intervale_init, area_11)
+        graph_network(network_graph_2, list_pos, intervale_init + 1, area_12)
+        area_12.set_title('Solution')
+
+
+        slider = Slider(ax=area_01,
+                        label="Itération",valmin=intervale_min,
+                        valmax=intervale_max,
+                        valinit=intervale_init,
+                        orientation="vertical",
+                        valstep=1)
+        b_add = Button(area_02, '+')
+        b_sub = Button(area_03, '-')
 
         def update(v_fig, v_ax, v_graph, v_list_pos, val):
             v_ax.cla()
-            # print(val)
-            # print(self.get_solutions_history()[val])
             graph_network(v_graph, v_list_pos, val, v_ax)
             v_fig.canvas.draw_idle()
 
-        amp_slider.on_changed(partial(update, fig, axe, network_graph, list_pos))
+        def act_add(v_fig, v_ax, v_graph, v_list_pos, v_slider, val):
+            v_slider.set_val(min(v_slider.val + 1, v_slider.valmax))
+            update(v_fig, v_ax, v_graph, v_list_pos, v_slider.val)
 
+        def act_sub(v_fig, v_ax, v_graph, v_list_pos, v_slider, val):
+            v_slider.set_val(max(v_slider.val - 1, v_slider.valmin))
+            update(v_fig, v_ax, v_graph, v_list_pos, v_slider.val)
+
+        slider.on_changed(partial(update, fig, area_11, network_graph, list_pos))
+        b_add.on_clicked(partial(act_add, fig, area_11, network_graph, list_pos, slider))
+        b_sub.on_clicked(partial(act_sub, fig, area_11, network_graph, list_pos, slider))
+
+        # manager = plt.get_current_fig_manager()
+        # manager.full_screen_toggle()
         plt.show()
 
     def cost(self, v_index):
@@ -707,15 +958,33 @@ class OrientedSolver:
         result = trace(self.__problem.get_cost_array().T @ P)
         return result
 
+    def all_cost_plot(self):
+        """
+        Generete the cost plot of all doubly stochastic matrix
+
+        """
+        costs = []
+        for element in list(permutations(list(range(self.__problem.get_number())))):
+            array = np.zeros((self.__problem.get_number(), self.__problem.get_number()))
+            # print(array)
+            for x, y in enumerate(element):
+                array[x, y] = 1
+            costs += [trace(self.__problem.get_cost_array().T @ array)]
+        plt.plot(costs)
+        the_cost = trace(self.__problem.lp_solve() @ self.__problem.get_cost_array().T)
+        plt.plot([0, len(costs) - 1], [the_cost, the_cost])
+        plt.show()
+
+
 ## +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ ##
 
 if __name__ == "__main__":
 
-    P_1 = TSPProblem(4, 100)
+    P_1 = TSPProblem(6, 100)
 
     # P_1.save("test.csv")
-    # P_1.load("test.csv")
-    # P_1.lp_solve()
+    P_1.load("test.csv")
+    P_1.lp_solve()
     # print(P_1)
 
     # P_2 = Problem(50, 200)
@@ -729,3 +998,5 @@ if __name__ == "__main__":
     a.solve()
     # print(a)
     a.plot()
+
+    # a.all_cost_plot()
