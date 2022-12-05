@@ -453,7 +453,7 @@ class OrientedSolver:
         self.grad_history = []
 
         self.__A = matrix_undir(problem.get_number())
-        self.__save_new_turn_solution(ortho_group.rvs(problem.get_number()))
+        self.__save_new_solution(ortho_group.rvs(problem.get_number()))
         # self.__A = None
         # self.__generate_default_solution()
         # self.__generate_default_lambda()
@@ -480,9 +480,7 @@ class OrientedSolver:
         array[self.__number - 1, 0] = 1
         for var in range(0, self.__number - 1):
             array[0 + var, 1 + var] = 1
-        self.__A = array
         self.__save_new_solution(array)
-        self.__save_new_turn_solution(array.T @ self.__A @ array)
 
     def __generate_default_lambda(self):
         """
@@ -724,29 +722,28 @@ class OrientedSolver:
 
         """
         # P = self.base_change.T @ solution_var @ self.base_change
-        P = solution_var
-        H_zero = self.__A
-        N = self.get_N()
+        P_B = solution_var
+        P_D = self.base_change.T @ P_B @ self.base_change
+        H_zero_B = self.__A
+        H_zero_D = self.base_change.T @ H_zero_B @ self.base_change
+        N_D = self.get_N()
         alpha = self.get_alpha()        
-        H = P.T @ H_zero @ P
-        alpha_k = 1 / 2 / norm_fro(std_lie_bracket(H, N)) * np.log((norm_fro(std_lie_bracket(H, N))**2 / norm_fro(P) / norm_fro(std_lie_bracket(N, std_lie_bracket(H, N)))) + 1)
+        H_D = P_D.T @ H_zero_D @ P_D
+        alpha_k = 1 / 2 / norm_fro(std_lie_bracket(H_D, N_D)) * np.log((norm_fro(std_lie_bracket(H_D, N_D))**2 / norm_fro(P_D) / norm_fro(std_lie_bracket(N_D, std_lie_bracket(H_D, N_D)))) + 1)
 
 
         # lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
-        lie_bracket = std_lie_bracket(P.T @ H_zero @ P, N)
+        lie_bracket = std_lie_bracket(P_D.T @ H_zero_D @ P_D, N_D)
 
         self.grad_history += [np.linalg.norm(lie_bracket, 'fro')]
 
-        H_and_N = std_lie_bracket(P.T @ H_zero @ P, N)
-        new_p = P @ exp_of_pade( -1 * alpha_k * H_and_N)
-
-
-        new_p = exp_of_pade(alpha * lie_bracket) @ P @ exp_of_pade(-1 * alpha * lie_bracket)
+        H_and_N_D = std_lie_bracket(P_D.T @ H_zero_D @ P_D, N_D)
+        new_p = P_D @ exp_of_pade( -1 * alpha_k * H_and_N_D)
 
         # print(new_p)
         # return self.__solution_history[0] * lambda_var / 4
         # return self.base_change @ new_p @ self.base_change.T
-        return new_p
+        return self.base_change @ new_p @ self.base_change.T
 
     def breaker(self):
         """
@@ -797,9 +794,11 @@ class OrientedSolver:
             #     self.new_lambda_exp_old(
             #         self.get_current_solution(), self.get_current_lambda()))
             ### Exponential de tour
-            self.__save_new_turn_solution(
+            self.__save_new_solution(
                 self.new_solution_exp(
-                    self.get_current_turn_solution()))
+                    self.get_current_solution()))
+            self.__save_new_turn_solution(
+                self.get_current_solution().T @ self.__A @ self.get_current_solution())
             # print(self.cost(-1))
 
     def solve(self):
@@ -984,5 +983,5 @@ if __name__ == "__main__":
     a.solve()
     # print(a)
     a.plot()
-
+    print("for debug")
     # a.all_cost_plot()
