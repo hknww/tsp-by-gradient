@@ -453,9 +453,10 @@ class OrientedSolver:
         self.grad_history = []
 
         self.__A = matrix_undir(problem.get_number())
-        self.__save_new_solution(ortho_group.rvs(problem.get_number()))
+        # self.__save_new_solution(ortho_group.rvs(problem.get_number()))
         # self.__A = None
-        # self.__generate_default_solution()
+        self.__generate_default_solution()
+        self.__save_new_turn_solution(self.get_current_solution().T @ self.__A @ self.get_current_solution())
         # self.__generate_default_lambda()
 
         self.__N = None
