@@ -984,5 +984,3 @@ if __name__ == "__main__":
     a.solve()
     # print(a)
     a.plot()
-    print("for debug")
-    # a.all_cost_plot()
