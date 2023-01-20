@@ -655,6 +655,13 @@ class OrientedSolver:
             self.__alpha = alpha
         return self.__alpha
 
+    def nearest_bistochastic(self,p):
+        I = np.identity(self.__number)
+        J = np.ones((self.__number,self.__number)) / self.__number
+        W = I - J
+        B = W @ p @ W + J
+        return B
+
     def new_solution_exp_old(self, solution_var, lambda_var):
         """
 
@@ -740,11 +747,13 @@ class OrientedSolver:
 
         H_and_N_D = std_lie_bracket(P_D.T @ H_zero_D @ P_D, N_D)
         new_p = P_D @ exp_of_pade( -1 * alpha_k * H_and_N_D)
-
+        
+        res =  self.base_change @ new_p @ self.base_change.T
+        res = self.nearest_bistochastic(res)
         # print(new_p)
         # return self.__solution_history[0] * lambda_var / 4
         # return self.base_change @ new_p @ self.base_change.T
-        return self.base_change @ new_p @ self.base_change.T
+        return res
 
     def breaker(self):
         """
@@ -969,7 +978,7 @@ if __name__ == "__main__":
     P_1 = TSPProblem(6, 100)
 
     # P_1.save("test.csv")
-    P_1.load("test.csv")
+    # P_1.load("test.csv")
     P_1.lp_solve()
     # print(P_1)
 
